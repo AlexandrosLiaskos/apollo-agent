@@ -149,6 +149,66 @@ export class ApolloAgent {
         _isLocal: true
       });
 
+      // Add task management tools for the LLM
+      this.allTools.push({
+        name: 'mark_task_complete',
+        description: 'Mark the current task as completed and move to the next task. Call this when you have finished working on the current task.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            taskId: {
+              type: 'number',
+              description: 'The ID of the task to mark as complete (optional - will use current task if not provided)'
+            },
+            result: {
+              type: 'string',
+              description: 'Brief summary of what was accomplished (optional)'
+            }
+          },
+          required: []
+        },
+        _server: 'local',
+        _isLocal: true
+      });
+
+      this.allTools.push({
+        name: 'start_task',
+        description: 'Start working on a specific task. Use this to explicitly mark a task as in-progress.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            taskId: {
+              type: 'number',
+              description: 'The ID of the task to start'
+            }
+          },
+          required: ['taskId']
+        },
+        _server: 'local',
+        _isLocal: true
+      });
+
+      this.allTools.push({
+        name: 'skip_task',
+        description: 'Skip a task that is not applicable or cannot be completed. Provide a reason.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            taskId: {
+              type: 'number',
+              description: 'The ID of the task to skip'
+            },
+            reason: {
+              type: 'string',
+              description: 'Reason why the task is being skipped'
+            }
+          },
+          required: ['taskId', 'reason']
+        },
+        _server: 'local',
+        _isLocal: true
+      });
+
       this.ui.stopSpinner(true, `Loaded ${this.allTools.length} tools from MCP servers`);
 
       // Load available memories for context
@@ -390,13 +450,14 @@ Format as JSON:
     if (currentTask) {
       const taskName = currentTask.name.toLowerCase();
       
-      // Pattern matching for task completion
+      // Expanded pattern matching for task completion
       const completionPatterns = [
-        { pattern: /gather|detect|check|identify/i, tools: ['execute_shell_command', 'mcp_oraios_serena_get_symbols_overview'] },
+        { pattern: /gather|detect|check|identify|request|query|determine|find.*system|analyze/i, tools: ['execute_shell_command', 'mcp_oraios_serena_get_symbols_overview', 'mcp_oraios_serena_read_memory', 'mcp_oraios_serena_list_memories'] },
         { pattern: /install/i, tools: ['execute_shell_command'] },
         { pattern: /configure|setup/i, tools: ['mcp_oraios_serena_replace_symbol_body', 'mcp_oraios_serena_insert_after_symbol', 'execute_shell_command'] },
-        { pattern: /research|search|find/i, tools: ['execute_shell_command', 'mcp_oraios_serena_search_for_pattern', 'mcp_oraios_serena_find_symbol'] },
+        { pattern: /research|search|find|locate/i, tools: ['execute_shell_command', 'mcp_oraios_serena_search_for_pattern', 'mcp_oraios_serena_find_symbol'] },
         { pattern: /test/i, tools: ['execute_shell_command'] },
+        { pattern: /provide|instructions|explain|suggest|offer|alternatives/i, tools: ['execute_shell_command', 'mcp_oraios_serena_read_memory', 'mcp_oraios_serena_write_memory'] },
       ];
       
       // Check if tool indicates task completion
@@ -405,8 +466,8 @@ Format as JSON:
         // Mark task as likely complete after this tool execution
         currentTask._toolExecutionCount = (currentTask._toolExecutionCount || 0) + 1;
         
-        // Complete after 2-3 relevant tool calls (configurable heuristic)
-        if (currentTask._toolExecutionCount >= 2) {
+        // Complete after 1-2 relevant tool calls (more aggressive)
+        if (currentTask._toolExecutionCount >= 1) {
           this.taskManager.completeTask(currentTask.id);
           this.ui.success(`✓ Completed task: ${currentTask.name}`);
           
@@ -654,9 +715,10 @@ ${nextTask ? `**Next Task**: ${nextTask.name}` : ''}
 
 **IMPORTANT**: 
 - Stay focused on completing the current task
-- Mark tasks as complete by finishing the work
+- **Use mark_task_complete tool when you finish a task** - don't rely on automatic detection!
+- Use start_task to begin working on a specific task
+- Use skip_task if a task is not applicable (provide reason)
 - Don't finish until ALL tasks are completed
-- If a task is done, move to the next one
 - Store important findings in the knowledge base
 
 All Tasks:
@@ -756,6 +818,14 @@ Store and retrieve knowledge during task execution:
 - Categories: intel, context, decisions, findings, references, symbols
 - Store important information as you discover it
 - Reference stored knowledge in future steps
+
+### 6. Task Management Tools
+When working with a plan, use these tools to explicitly manage task status:
+- **mark_task_complete**: Call this when you finish a task (don't rely on auto-detection!)
+- **start_task**: Explicitly start a specific task by ID
+- **skip_task**: Skip a task that's not applicable (provide reason)
+
+CRITICAL: Always call mark_task_complete when you complete a task. The system will auto-start the next task.
 
 ### 6. Symbol Index (Intelligent Caching)
 **IMPORTANT**: Apollo has an intelligent symbol caching system!
@@ -877,6 +947,86 @@ Then RESPOND to user with your understanding before executing other tools.`;
             })
           }]
         };
+      } else if (isLocal && toolName === 'mark_task_complete') {
+        // Handle task completion
+        const taskId = args.taskId || this.taskManager.tasks.find(t => t.status === 'in-progress')?.id;
+        if (taskId) {
+          const task = this.taskManager.completeTask(taskId, args.result);
+          this.ui.success(`✓ Completed task: ${task.name}`);
+          
+          // Start next task if available
+          const nextTask = this.taskManager.getNextTask();
+          if (nextTask) {
+            this.taskManager.startTask(nextTask.id);
+            this.ui.info(`Starting next task: ${nextTask.name}`);
+          }
+          
+          result = {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                success: true,
+                completedTask: task.name,
+                nextTask: nextTask?.name || null,
+                progress: this.taskManager.getProgress()
+              })
+            }]
+          };
+        } else {
+          result = {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({ success: false, error: 'No task in progress or taskId not found' })
+            }]
+          };
+        }
+      } else if (isLocal && toolName === 'start_task') {
+        // Handle starting a task
+        const task = this.taskManager.startTask(args.taskId);
+        if (task) {
+          this.ui.info(`▶ Starting task: ${task.name}`);
+          result = {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                success: true,
+                task: task.name,
+                progress: this.taskManager.getProgress()
+              })
+            }]
+          };
+        } else {
+          result = {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({ success: false, error: 'Task not found' })
+            }]
+          };
+        }
+      } else if (isLocal && toolName === 'skip_task') {
+        // Handle skipping a task
+        const task = this.taskManager.skipTask(args.taskId, args.reason);
+        if (task) {
+          this.ui.warning(`⊘ Skipped task: ${task.name} - ${args.reason}`);
+          result = {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                success: true,
+                skippedTask: task.name,
+                reason: args.reason,
+                progress: this.taskManager.getProgress()
+              })
+            }]
+          };
+        } else {
+          result = {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({ success: false, error: 'Task not found' })
+            }]
+          };
+        }
       } else {
         // Call MCP tool
         result = await this.mcp.callTool(serverName, toolName, args);
