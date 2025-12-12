@@ -367,4 +367,4 @@ MIT License - see [LICENSE](LICENSE) file for details
 
 ---
 
-Built with ❤️ by the Alexandros Liaskos
+Built with ❤️ by Alexandros Liaskos
