@@ -13,6 +13,8 @@
 
 Apollo Agent integrates cutting-edge MCP (Model Context Protocol) servers with OpenRouter LLMs to provide intelligent, context-aware assistance for software development tasks. It combines semantic code analysis (Serena), structured problem-solving (Sequential Thinking), and powerful language models to understand and manipulate codebases at a deep level.
 
+<img width="909" height="970" alt="screenshot-2025-12-12_07-06-38" src="https://github.com/user-attachments/assets/d7af0996-a406-4f2f-b9bb-6b1f15c71f84" />
+
 ## 🎯 Features
 
 - **🔍 Semantic Code Analysis** - Understands code structure, symbols, and relationships via Serena MCP
