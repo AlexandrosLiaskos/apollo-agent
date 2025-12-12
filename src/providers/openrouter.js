@@ -36,11 +36,13 @@ export class OpenRouterProvider {
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout
+        const timeoutId = setTimeout(() => controller.abort(), 120000); // 120s timeout (increased)
 
         const response = await fetch(url, {
           ...options,
           signal: controller.signal,
+          // Add keepalive for better connection stability
+          keepalive: true,
         });
 
         clearTimeout(timeoutId);
