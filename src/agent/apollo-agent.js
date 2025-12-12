@@ -111,6 +111,10 @@ export class ApolloAgent {
       for (const [server, tools] of Object.entries(toolsMap)) {
         if (Array.isArray(tools)) {
           for (const tool of tools) {
+            // Skip Serena's execute_shell_command - we'll use our local one
+            if (tool.name === 'execute_shell_command' && server === 'serena') {
+              continue;
+            }
             this.allTools.push({
               ...tool,
               _server: server,
@@ -118,6 +122,32 @@ export class ApolloAgent {
           }
         }
       }
+
+      // Add local shell command tool with sudo support
+      this.allTools.push({
+        name: 'execute_shell_command',
+        description: 'Execute a shell command with optional sudo support. Use this for system operations that may require elevated privileges.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            command: {
+              type: 'string',
+              description: 'The shell command to execute'
+            },
+            cwd: {
+              type: 'string',
+              description: 'Working directory for the command (optional)'
+            },
+            requiresSudo: {
+              type: 'boolean',
+              description: 'Whether this command requires sudo privileges (optional, auto-detected for commands starting with "sudo")'
+            }
+          },
+          required: ['command']
+        },
+        _server: 'local',
+        _isLocal: true
+      });
 
       this.ui.stopSpinner(true, `Loaded ${this.allTools.length} tools from MCP servers`);
 
@@ -286,8 +316,14 @@ Format as JSON:
         { role: 'user', content: planningPrompt }
       ]);
 
+      // Extract content from OpenRouter response
+      const content = response.choices?.[0]?.message?.content;
+      if (!content) {
+        throw new Error('No content in response');
+      }
+
       // Extract JSON from response
-      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const plan = JSON.parse(jsonMatch[0]);
         
@@ -753,10 +789,11 @@ Then RESPOND to user with your understanding before executing other tools.`;
     }
 
     const serverName = tool._server;
+    const isLocal = tool._isLocal;
 
     // Show more details for shell commands so user knows what's happening
     if (toolName === 'execute_shell_command') {
-      this.ui.info(`🔧 Executing: ${args.command || 'unknown command'}`);
+      this.ui.info(`🔧 Executing${isLocal ? ' (with sudo support)' : ''}: ${args.command || 'unknown command'}`);
       if (args.cwd) {
         this.ui.info(`   in directory: ${args.cwd}`);
       }
@@ -767,7 +804,31 @@ Then RESPOND to user with your understanding before executing other tools.`;
     }
 
     try {
-      const result = await this.mcp.callTool(serverName, toolName, args);
+      let result;
+      
+      // Handle local tools
+      if (isLocal && toolName === 'execute_shell_command') {
+        const terminalResult = await this.terminal.execute(args.command, {
+          cwd: args.cwd,
+          session: 'main'
+        });
+        
+        // Format as MCP response
+        result = {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              stdout: terminalResult.stdout || '',
+              stderr: terminalResult.stderr || '',
+              return_code: terminalResult.success ? 0 : (terminalResult.exitCode || 1)
+            })
+          }]
+        };
+      } else {
+        // Call MCP tool
+        result = await this.mcp.callTool(serverName, toolName, args);
+      }
+      
       this.session.addToolExecution(toolName, args, result);
 
       // Show sequential thinking output nicely
@@ -785,7 +846,7 @@ Then RESPOND to user with your understanding before executing other tools.`;
           .join('\n');
 
         if (rawOutput) {
-          // Parse the JSON response from Serena's shell command
+          // Parse the JSON response from shell command
           let displayOutput = rawOutput;
           try {
             const parsed = JSON.parse(rawOutput);

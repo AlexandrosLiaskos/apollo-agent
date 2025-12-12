@@ -149,6 +149,20 @@ export class OpenRouterProvider {
     let iteration = 0;
     let currentMessages = [...messages];
 
+    // Helper function to decode HTML entities
+    const decodeHTMLEntities = (text) => {
+      const entities = {
+        '&amp;': '&',
+        '&lt;': '<',
+        '&gt;': '>',
+        '&quot;': '"',
+        '&#39;': "'",
+        '&#x27;': "'",
+        '&#x2F;': '/',
+      };
+      return text.replace(/&[#\w]+;/g, (entity) => entities[entity] || entity);
+    };
+
     while (iteration < maxIterations) {
       iteration++;
 
@@ -170,7 +184,9 @@ export class OpenRouterProvider {
       // Execute tools and add results
       const toolResults = await Promise.all(
         toolCalls.map(async (call) => {
-          const args = JSON.parse(call.function.arguments);
+          // Decode HTML entities before parsing JSON
+          const decodedArgs = decodeHTMLEntities(call.function.arguments);
+          const args = JSON.parse(decodedArgs);
           return await executeToolFn(call.function.name, args);
         })
       );
